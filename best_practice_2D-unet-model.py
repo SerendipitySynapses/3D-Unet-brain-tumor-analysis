@@ -1,10 +1,12 @@
+import os
 import tensorflow as tf
 from sklearn.model_selection import train_test_split
-from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, UpSampling2D, concatenate, Dropout
+from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, UpSampling2D, concatenate, Dropout,concatenate
 from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping, ModelCheckpoint, Callback ,CSVLogger
 from tensorflow.keras.models import Model
 import tensorflow.keras.backend as K
 from data_generator import DataGenerator
+
 # Prepare IDs and data generators
 input_dir = './Dataset/BraTS2020_TrainingData/MICCAI_BraTS2020_TrainingData'
 train_and_test_ids = [f.name.split('_')[-1] for f in os.scandir(input_dir) if f.is_dir()]
@@ -14,66 +16,45 @@ train_generator = DataGenerator(train_ids, input_dir)
 val_generator = DataGenerator(val_ids, input_dir)
 test_generator = DataGenerator(test_ids, input_dir)
 
+def conv_block(inputs, num_filters, kernel_initializer, dropout_rate=None):
+    conv = Conv2D(num_filters, 3, activation='relu', padding='same', kernel_initializer=kernel_initializer)(inputs)
+    conv = Conv2D(num_filters, 3, activation='relu', padding='same', kernel_initializer=kernel_initializer)(conv)
+    if dropout_rate:
+        conv = Dropout(dropout_rate)(conv)
+    return conv
+
+def up_conv_block(inputs, skip_connection, num_filters, kernel_initializer):
+    up = UpSampling2D(size=(2, 2))(inputs)
+    up = Conv2D(num_filters, 2, activation='relu', padding='same', kernel_initializer=kernel_initializer)(up)
+    merge = concatenate([skip_connection, up], axis=3)
+    conv = Conv2D(num_filters, 3, activation='relu', padding='same', kernel_initializer=kernel_initializer)(merge)
+    conv = Conv2D(num_filters, 3, activation='relu', padding='same', kernel_initializer=kernel_initializer)(conv)
+    return conv
+
 def unet(ker_init, dropout):
     inputs = Input((128, 128, 4))
     # Downsampling path
-    conv1 = Conv2D(32, 3, activation='relu', padding='same', kernel_initializer=ker_init)(inputs)
-    conv1 = Conv2D(32, 3, activation='relu', padding='same', kernel_initializer=ker_init)(conv1)
+    conv1 = conv_block(inputs, 32, ker_init)
     pool1 = MaxPooling2D(pool_size=(2, 2))(conv1)
-
-    conv2 = Conv2D(64, 3, activation='relu', padding='same', kernel_initializer=ker_init)(pool1)
-    conv2 = Conv2D(64, 3, activation='relu', padding='same', kernel_initializer=ker_init)(conv2)
+    conv2 = conv_block(pool1, 64, ker_init)
     pool2 = MaxPooling2D(pool_size=(2, 2))(conv2)
-
-    conv3 = Conv2D(128, 3, activation='relu', padding='same', kernel_initializer=ker_init)(pool2)
-    conv3 = Conv2D(128, 3, activation='relu', padding='same', kernel_initializer=ker_init)(conv3)
+    conv3 = conv_block(pool2, 128, ker_init)
     pool3 = MaxPooling2D(pool_size=(2, 2))(conv3)
-
-    conv4 = Conv2D(256, 3, activation='relu', padding='same', kernel_initializer=ker_init)(pool3)
-    conv4 = Conv2D(256, 3, activation='relu', padding='same', kernel_initializer=ker_init)(conv4)
+    conv4 = conv_block(pool3, 256, ker_init)
     pool4 = MaxPooling2D(pool_size=(2, 2))(conv4)
-
-    conv5 = Conv2D(512, 3, activation='relu', padding='same', kernel_initializer=ker_init)(pool4)
-    conv5 = Conv2D(512, 3, activation='relu', padding='same', kernel_initializer=ker_init)(conv5)
-    drop5 = Dropout(dropout)(conv5)
-
+    conv5 = conv_block(pool4, 512, ker_init, dropout)
+    pool5 = MaxPooling2D(pool_size=(2, 2))(conv5)
     # Bottleneck
-    conv6 = Conv2D(1024, 3, activation='relu', padding='same', kernel_initializer=ker_init)(drop5)
-    conv6 = Conv2D(1024, 3, activation='relu', padding='same', kernel_initializer=ker_init)(conv6)
-    drop6 = Dropout(dropout)(conv6)
-
+    conv6 = conv_block(pool5, 1024, ker_init, dropout)
     # Upsampling path
-    up7 = Conv2D(512, 2, activation='relu', padding='same', kernel_initializer=ker_init)(
-        UpSampling2D(size=(2, 2))(drop6))
-    merge7 = concatenate([drop5, up7], axis=3)
-    conv7 = Conv2D(512, 3, activation='relu', padding='same', kernel_initializer=ker_init)(merge7)
-    conv7 = Conv2D(512, 3, activation='relu', padding='same', kernel_initializer=ker_init)(conv7)
-
-    up8 = Conv2D(256, 2, activation='relu', padding='same', kernel_initializer=ker_init)(
-        UpSampling2D(size=(2, 2))(conv7))
-    merge8 = concatenate([conv4, up8], axis=3)
-    conv8 = Conv2D(256, 3, activation='relu', padding='same', kernel_initializer=ker_init)(merge8)
-    conv8 = Conv2D(256, 3, activation='relu', padding='same', kernel_initializer=ker_init)(conv8)
-
-    up9 = Conv2D(128, 2, activation='relu', padding='same', kernel_initializer=ker_init)(
-        UpSampling2D(size=(2, 2))(conv8))
-    merge9 = concatenate([conv3, up9], axis=3)
-    conv9 = Conv2D(128, 3, activation='relu', padding='same', kernel_initializer=ker_init)(merge9)
-    conv9 = Conv2D(128, 3, activation='relu', padding='same', kernel_initializer=ker_init)(conv9)
-
-    up10 = Conv2D(64, 2, activation='relu', padding='same', kernel_initializer=ker_init)(
-        UpSampling2D(size=(2, 2))(conv9))
-    merge10 = concatenate([conv2, up10], axis=3)
-    conv10 = Conv2D(64, 3, activation='relu', padding='same', kernel_initializer=ker_init)(merge10)
-    conv10 = Conv2D(64, 3, activation='relu', padding='same', kernel_initializer=ker_init)(conv10)
-
-    up11 = Conv2D(32, 2, activation='relu', padding='same', kernel_initializer=ker_init)(
-        UpSampling2D(size=(2, 2))(conv10))
-    merge11 = concatenate([conv1, up11], axis=3)
-    conv11 = Conv2D(32, 3, activation='relu', padding='same', kernel_initializer=ker_init)(merge11)
-    conv11 = Conv2D(32, 3, activation='relu', padding='same', kernel_initializer=ker_init)(conv11)
+    conv7 = up_conv_block(conv6, conv5, 512, ker_init)
+    conv8 = up_conv_block(conv7, conv4, 256, ker_init)
+    conv9 = up_conv_block(conv8, conv3, 128, ker_init)
+    conv10 = up_conv_block(conv9, conv2, 64, ker_init)
+    conv11 = up_conv_block(conv10, conv1, 32, ker_init)
     outputs = Conv2D(4, 1, activation='softmax')(conv11)
     return Model(inputs=inputs, outputs=outputs)
+
 
 model = unet('he_normal', 0.2)
 
