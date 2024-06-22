@@ -1,3 +1,4 @@
-./Dataset
-k.py
+Dataset
 custom-datagen.py
+.idea
+.gitignore
